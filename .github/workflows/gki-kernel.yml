@@ -239,8 +239,8 @@ jobs:
               ;;
           esac
 
-     
-    - name: BBG
+
+      - name: BBG
         run: |
           echo "更改为配置目录: $CONFIG..."
           cd "$CONFIG/common"
