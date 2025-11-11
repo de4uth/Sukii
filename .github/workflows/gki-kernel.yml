@@ -502,7 +502,9 @@ jobs:
           fi
 
           if [ "${{ inputs.android_version }}" = "android14" ] || [ "${{ inputs.android_version }}" = "android15" ]; then
-            sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$KERNEL_COMMON_DIR/modules.bzl"
+            if [ -f "$KERNEL_COMMON_DIR/modules.bzl" ]; then
+              sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$KERNEL_COMMON_DIR/modules.bzl"
+            fi
             echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
             echo 'Android14_Bazel:已修复zram&zsmalloc'
           fi
