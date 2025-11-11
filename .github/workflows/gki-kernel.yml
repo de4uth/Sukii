@@ -106,8 +106,13 @@ jobs:
           echo "CONFIG set to: $CONFIG"
 
       # Install ccache
-      - name: 安装 ccache
-        run: sudo apt update && sudo apt upgrade -y && sudo apt install -y ccache python3 git curl
+      - name: 安装构建依赖
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          # 基础工具
+          sudo apt install -y ccache python3 git curl wget unzip rsync
+          # 内核构建依赖（make 路径所需）
+          sudo apt install -y clang lld llvm make bc flex bison libssl-dev libelf-dev dwarves device-tree-compiler lz4
 
       - name: 配置 ccache
         run: |
@@ -436,11 +441,11 @@ jobs:
 
           if [ "${{ inputs.kernelsu_variant }}" == "Next" ]; then
             echo "Applying hooks for KernelSU-Next..."
-            cp ../../kernel_patches/next/scope_min_manual_hooks_v1.4.patch ./
+            cp "$GITHUB_WORKSPACE/kernel_patches/next/scope_min_manual_hooks_v1.4.patch" ./
             patch -p1 -F 3 < scope_min_manual_hooks_v1.4.patch
           elif [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
             echo "Applying hooks for SukiSU..."
-            cp ../../SukiSU_patch/hooks/scope_min_manual_hooks_v1.6.patch ./
+            cp "$GITHUB_WORKSPACE/SukiSU_patch/hooks/scope_min_manual_hooks_v1.6.patch" ./
             patch -p1 -F 3 < scope_min_manual_hooks_v1.6.patch
           fi
 
@@ -449,17 +454,17 @@ jobs:
         run: |
           echo "更改为配置目录: $KERNEL_COMMON_DIR..."
           cd "$KERNEL_COMMON_DIR"
-          cp -r ../../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
-          cp -r ../../SukiSU_patch/other/zram/lz4k/lib/* ./lib/
-          cp -r ../../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto/
-          cp -r ../../SukiSU_patch/other/zram/lz4k_oplus ./lib/
+          cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k/include/linux"/* ./include/linux/
+          cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k/lib"/* ./lib/
+          cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k/crypto"/* ./crypto/
+          cp -r "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/lz4k_oplus" ./lib/
 
-          cp ../../SukiSU_patch/other/zram/zram_patch/${{ inputs.kernel_version }}/lz4kd.patch ./
+          cp "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/zram_patch/${{ inputs.kernel_version }}/lz4kd.patch" ./
           echo "正在打lz4kd补丁"
           patch -p1 -F 3 < lz4kd.patch || true
           echo '完成LZ4KD补丁'
 
-          cp ../../SukiSU_patch/other/zram/zram_patch/${{ inputs.kernel_version }}/lz4k_oplus.patch ./
+          cp "$GITHUB_WORKSPACE/SukiSU_patch/other/zram/zram_patch/${{ inputs.kernel_version }}/lz4k_oplus.patch" ./
           echo "正在打lz4k_oplus补丁"
           patch -p1 -F 3 < lz4k_oplus.patch || true
           echo '完成lz4k_oplus补丁'
@@ -470,10 +475,10 @@ jobs:
           cd "$KERNEL_COMMON_DIR"
           # Apply additional patch
           if [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
-          cp ../../SukiSU_patch/69_hide_stuff.patch ./
+          cp "$GITHUB_WORKSPACE/SukiSU_patch/69_hide_stuff.patch" ./
           patch -p1 -F 3 < 69_hide_stuff.patch
           else
-            cp ../../kernel_patches/69_hide_stuff.patch ./
+            cp "$GITHUB_WORKSPACE/kernel_patches/69_hide_stuff.patch" ./
             patch -p1 -F 3 < 69_hide_stuff.patch
           fi
 
