@@ -645,12 +645,17 @@ jobs:
           echo "更改为配置目录: $CONFIG..."
           cd "$CONFIG"
           
-          if [ ! -z ${{ inputs.version }} ]; then
+          version_input="${{ inputs.version }}"
+          if [ -n "$version_input" ]; then
             echo "版本号不为空"
-            sed -i '$s|echo "\$res"|echo "${{ inputs.version }}"|' "$KERNEL_COMMON_DIR/scripts/setlocalversion"
+            if [ -f "$KERNEL_COMMON_DIR/scripts/setlocalversion" ]; then
+              sed -i '$s|echo "\$res"|echo "'$version_input'"|' "$KERNEL_COMMON_DIR/scripts/setlocalversion"
+            fi
           else
             echo "版本号为空，使用默认值"
-            sed -i '$s|echo "\$res"|echo "\$res-zakozakoooooo-1145141919"|' "$KERNEL_COMMON_DIR/scripts/setlocalversion"
+            if [ -f "$KERNEL_COMMON_DIR/scripts/setlocalversion" ]; then
+              sed -i '$s|echo "\$res"|echo "\$res-zakozakoooooo-1145141919"|' "$KERNEL_COMMON_DIR/scripts/setlocalversion"
+            fi
           fi
 
           # 如果你需要改构建时间,请把以下变量 CURRENT_TIME 修改为如下例子字符串,如:CURRENT_TIME="Sat Jun 07 06:29:29 UTC 2025"
@@ -659,7 +664,9 @@ jobs:
           CURRENT_TIME=$(date -u +"%a %b %d %H:%M:%S UTC %Y")
 
           echo "CURRENT_TIME=$CURRENT_TIME"
-          perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
+          if [ -f ./common/scripts/mkcompile_h ]; then
+            perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
+          fi
 
           # Ensure mkcompile_h updated when using custom source layout
           sed -i "s/UTS_VERSION=.*/UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"/" "$KERNEL_COMMON_DIR/scripts/mkcompile_h" || true
@@ -670,14 +677,13 @@ jobs:
           fi
           
           if [ -f "build/build.sh" ]; then
-            sed -i 's/-dirty//' ./common/scripts/setlocalversion
+            [ -f ./common/scripts/setlocalversion ] && sed -i 's/-dirty//' ./common/scripts/setlocalversion || true
           else
-            sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel
-            rm -rf ./common/android/abi_gki_protected_exports_*
-            sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
-            # sed -E -i '/^CONFIG_LOCALVERSION=/ s/(.*)"$/\1"/' ./common/arch/arm64/configs/gki_defconfig
-            if [ ! -z ${{ inputs.version }} ]; then
-              sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="${{ inputs.version }}"/' ./common/arch/arm64/configs/gki_defconfig
+            [ -f ./common/BUILD.bazel ] && sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel || true
+            rm -rf ./common/android/abi_gki_protected_exports_* || true
+            [ -f ./build/kernel/kleaf/impl/stamp.bzl ] && sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl || true
+            if [ -n "$version_input" ] && [ -f ./common/arch/arm64/configs/gki_defconfig ]; then
+              sed -i '/^CONFIG_LOCALVERSION=/ s/="\([^"]*\)"/="'$version_input'"/' ./common/arch/arm64/configs/gki_defconfig
             fi
           fi
 
