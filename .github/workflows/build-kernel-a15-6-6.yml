@@ -50,6 +50,20 @@ on:
         required: true
         type: boolean
         default: false
+      build_system:
+        description: '选择构建系统 (auto/build_sh/bazel/make)'
+        required: false
+        type: choice
+        options:
+          - auto
+          - build_sh
+          - bazel
+          - make
+        default: auto
+      defconfig_name:
+        description: '指定defconfig名称用于make构建 (例如: nothing_sm7635_defconfig)'
+        required: false
+        type: string
       get_manager:
         description: '是否同时获取最新KSU管理器?（实验性功能，报错请关闭）'
         required: true
@@ -69,6 +83,8 @@ jobs:
       use_kpm: ${{ inputs.use_kpm }}
       supp_op: ${{ inputs.supp_op }}
       BBG: ${{ inputs.BBG }}
+      build_system: ${{ inputs.build_system }}
+      defconfig_name: ${{ inputs.defconfig_name }}
  get-ksu-manager:
     if: ${{ inputs.get_manager }}
     uses: ./.github/workflows/get-manager.yml

@@ -69,3 +69,5 @@ jobs:
       BBG: ${{ inputs.BBG || false }}
       kernel_source_url: "https://github.com/NullDebris/android_kernel_nothing_sm7635"
       kernel_source_ref: "android15-6.6.111"
+      build_system: ${{ inputs.build_system || 'auto' }}
+      defconfig_name: ${{ inputs.defconfig_name || '' }}

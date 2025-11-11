@@ -63,6 +63,16 @@ on:
         type: string
         description: "Branch or tag to checkout for custom kernel source"
         default: "android15-6.6"
+      build_system:
+        required: false
+        type: string
+        description: "Preferred build system: auto | build_sh | bazel | make"
+        default: "auto"
+      defconfig_name:
+        required: false
+        type: string
+        description: "Explicit defconfig to use for plain make builds (e.g., nothing_sm7635_defconfig)"
+        default: ""
 jobs:
   build-kernel-kernelsu-susfs:
     runs-on: ubuntu-latest
@@ -678,7 +688,8 @@ jobs:
             fi
 
             echo "Building the kernel..."
-            if [ -f "build/build.sh" ]; then
+            BUILD_SYSTEM="${{ inputs.build_system }}"
+            if [ "$BUILD_SYSTEM" = "build_sh" ] || { [ "$BUILD_SYSTEM" = "auto" ] && [ -f "build/build.sh" ]; }; then
               if [ -f "$KERNEL_COMMON_DIR/build.config.gki.aarch64" ]; then
                 LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
               else
@@ -688,14 +699,19 @@ jobs:
                 echo "Using BUILD_CONFIG=$BUILD_CONFIG"
                 LTO=thin BUILD_CONFIG="$BUILD_CONFIG" build/build.sh CC="/usr/bin/ccache clang" || exit 1
               fi
-            elif [ -f "WORKSPACE" ] || [ -d "build/kernel/kleaf" ] || [ -x "tools/bazel" ]; then
+            elif [ "$BUILD_SYSTEM" = "bazel" ] || { [ "$BUILD_SYSTEM" = "auto" ] && { [ -f "WORKSPACE" ] || [ -d "build/kernel/kleaf" ] || [ -x "tools/bazel" ]; }; }; then
               tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist || exit 1
             else
               echo "No Bazel or build.sh detected; attempting plain make build (LineageOS-style)"
               KDIR="$KERNEL_COMMON_DIR"
               OUT_DIR="$CONFIG/out-make"
               mkdir -p "$OUT_DIR"
-              DEFCONFIG=$(ls "$KDIR/arch/arm64/configs" 2>/dev/null | grep -E 'gki.*defconfig|defconfig$' | head -n1 || true)
+              DEFCONFIG_INPUT="${{ inputs.defconfig_name }}"
+              if [ -n "$DEFCONFIG_INPUT" ]; then
+                DEFCONFIG="$DEFCONFIG_INPUT"
+              else
+                DEFCONFIG=$(ls "$KDIR/arch/arm64/configs" 2>/dev/null | grep -E 'gki.*defconfig|defconfig$' | head -n1 || true)
+              fi
               if [ -z "$DEFCONFIG" ]; then echo "No defconfig found under $KDIR/arch/arm64/configs"; exit 1; fi
               echo "Using DEFCONFIG=$DEFCONFIG"
               # Merge extra config if available
