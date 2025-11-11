@@ -626,6 +626,19 @@ jobs:
           if [ -f "$KERNEL_COMMON_DIR/build.config.gki" ]; then
             sed -i 's/check_defconfig//' "$KERNEL_COMMON_DIR/build.config.gki"
           fi
+      
+      - name: 兼容无 common 布局的路径
+        run: |
+          echo "更改为配置目录: $CONFIG..."
+          cd "$CONFIG"
+          if [ ! -d "./common" ]; then
+            echo "创建兼容目录 ./common 以适配脚本中的路径引用"
+            mkdir -p ./common/scripts ./common/init ./common/arch/arm64/configs ./common/android || true
+            [ -f "$KERNEL_COMMON_DIR/scripts/mkcompile_h" ] && cp "$KERNEL_COMMON_DIR/scripts/mkcompile_h" ./common/scripts/ || true
+            [ -f "$KERNEL_COMMON_DIR/init/Makefile" ] && cp "$KERNEL_COMMON_DIR/init/Makefile" ./common/init/ || true
+            [ -f "$KERNEL_COMMON_DIR/BUILD.bazel" ] && cp "$KERNEL_COMMON_DIR/BUILD.bazel" ./common/ || true
+            [ -f "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig" ] && cp "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig" ./common/arch/arm64/configs/ || true
+          fi
 
       - name: 配置内核名称
         run: |
