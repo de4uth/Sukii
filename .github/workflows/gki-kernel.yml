@@ -330,9 +330,9 @@ jobs:
           echo "Applying SUSFS patches..."
 
           # Copy SUSFS patches
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./common/
-          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch "$KERNEL_COMMON_DIR"/
+          cp ../susfs4ksu/kernel_patches/fs/* "$KERNEL_COMMON_DIR"/fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/* "$KERNEL_COMMON_DIR"/include/linux/
 
           if [ "${{ inputs.kernelsu_variant }}" == "Official" ]; then
             echo "Applying SUSFS patches for Official KernelSU..."
@@ -474,13 +474,20 @@ jobs:
           set -e
           echo "写入LZ4KD&ZSTDN config依赖"
           CONFIG_FILE="$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          EXTRA_CONFIG="$KERNEL_COMMON_DIR/gki_extra.config"
+          TARGET_CONFIG="$CONFIG_FILE"
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "未找到 gki_defconfig, 使用额外配置片段: $EXTRA_CONFIG"
+            TARGET_CONFIG="$EXTRA_CONFIG"
+            touch "$EXTRA_CONFIG"
+          fi
 
           if [ "${{ inputs.kernel_version }}" = "5.10" ]; then
-            echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
-            echo "CONFIG_ZRAM=y" >> "$CONFIG_FILE"
-            echo "CONFIG_MODULE_SIG=n" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZO=y" >> "$CONFIG_FILE"
-            echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y" >> "$CONFIG_FILE"
+            echo "CONFIG_ZSMALLOC=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_ZRAM=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_MODULE_SIG=n" >> "$TARGET_CONFIG"
+            echo "CONFIG_CRYPTO_LZO=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y" >> "$TARGET_CONFIG"
           fi
 
           if [ "${{ inputs.kernel_version }}" != "6.6" ] && [ "${{ inputs.kernel_version }}" != "5.10" ]; then
@@ -490,32 +497,42 @@ jobs:
                 sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "$CONFIG_FILE"
             else
                 echo "警告：文件 $CONFIG_FILE 不包含字符串 CONFIG_ZSMALLOC。"
-                echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
+                echo "CONFIG_ZSMALLOC=y" >> "$TARGET_CONFIG"
             fi
 
-            sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
+            if [ -f "$CONFIG_FILE" ]; then
+              sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
+            else
+              echo "CONFIG_ZRAM=y" >> "$TARGET_CONFIG"
+            fi
           fi
 
           if [ "${{ inputs.kernel_version }}" = "6.6" ]; then
-            echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
-            sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
+            echo "CONFIG_ZSMALLOC=y" >> "$TARGET_CONFIG"
+            if [ -f "$CONFIG_FILE" ]; then
+              sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
+            else
+              echo "CONFIG_ZRAM=y" >> "$TARGET_CONFIG"
+            fi
           fi
 
           if [ "${{ inputs.android_version }}" = "android14" ] || [ "${{ inputs.android_version }}" = "android15" ]; then
             if [ -f "$KERNEL_COMMON_DIR/modules.bzl" ]; then
               sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$KERNEL_COMMON_DIR/modules.bzl"
             fi
-            echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
+            echo "CONFIG_MODULE_SIG_FORCE=n" >> "$TARGET_CONFIG"
             echo 'Android14_Bazel:已修复zram&zsmalloc'
           fi
 
-          if grep -q "CONFIG_ZSMALLOC=y" "$CONFIG_FILE" && grep -q "CONFIG_ZRAM=y" "$CONFIG_FILE"; then
-            echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4KD=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$CONFIG_FILE"
-            echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
+          HAS_ZS=$(grep -q "CONFIG_ZSMALLOC=y" "$TARGET_CONFIG" && echo 1 || echo 0)
+          HAS_ZR=$(grep -q "CONFIG_ZRAM=y" "$TARGET_CONFIG" && echo 1 || echo 0)
+          if [ "$HAS_ZS" = 1 ] && [ "$HAS_ZR" = 1 ]; then
+            echo "CONFIG_CRYPTO_LZ4HC=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_CRYPTO_LZ4K=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_CRYPTO_LZ4KD=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_CRYPTO_842=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_CRYPTO_LZ4K_OPLUS=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_ZRAM_WRITEBACK=y" >> "$TARGET_CONFIG"
           fi
 
       - name: 设置BBR为默认拥塞算法
@@ -530,57 +547,65 @@ jobs:
           echo "更改为配置目录: $CONFIG..."
           cd "$CONFIG"
           echo "Adding configuration settings to gki_defconfig..."
+          CONFIG_FILE="$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          EXTRA_CONFIG="$KERNEL_COMMON_DIR/gki_extra.config"
+          TARGET_CONFIG="$CONFIG_FILE"
+          if [ ! -f "$CONFIG_FILE" ]; then
+            echo "未找到 gki_defconfig, 使用额外配置片段: $EXTRA_CONFIG"
+            TARGET_CONFIG="$EXTRA_CONFIG"
+            touch "$EXTRA_CONFIG"
+          fi
 
           # Add KSU configuration settings
-          echo "CONFIG_KSU=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU=y" >> "$TARGET_CONFIG"
 
           if [ "${{ inputs.kernelsu_variant }}" == "Next" ]; then
-            echo "CONFIG_KSU_KPROBES_HOOK=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+            echo "CONFIG_KSU_KPROBES_HOOK=n" >> "$TARGET_CONFIG"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$TARGET_CONFIG"
           elif [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
-            echo "CONFIG_KPM=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+            echo "CONFIG_KPM=y" >> "$TARGET_CONFIG"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$TARGET_CONFIG"
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$TARGET_CONFIG"
           elif [ "${{ inputs.kernelsu_variant }}" == "MKSU" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$TARGET_CONFIG"
           fi
           
           # Add additional tmpfs config setting
-          echo "CONFIG_TMPFS_XATTR=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TMPFS_XATTR=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$TARGET_CONFIG"
 
           # Add additional config setting
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$TARGET_CONFIG"
 
           # Add BBR Config
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_TCP_CONG_BBR=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_NET_SCH_FQ=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_TCP_CONG_BIC=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_TCP_CONG_HTCP=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_TCP_CONG_BBR=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_NET_SCH_FQ=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_TCP_CONG_BIC=n" >> "$TARGET_CONFIG"
+          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$TARGET_CONFIG"
+          echo "CONFIG_TCP_CONG_HTCP=n" >> "$TARGET_CONFIG"
 
           # Add SUSFS configuration settings
-          echo "CONFIG_KSU_SUSFS=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> "$TARGET_CONFIG"
           if [ "${{ inputs.kernel_version }}" != "6.6" ]; then
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$TARGET_CONFIG"
           else
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=n" >> "$TARGET_CONFIG"
           fi
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$TARGET_CONFIG"
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$TARGET_CONFIG"
           
           # Remove check_defconfig
           if [ -f "$KERNEL_COMMON_DIR/build.config.gki" ]; then
@@ -663,8 +688,25 @@ jobs:
                 echo "Using BUILD_CONFIG=$BUILD_CONFIG"
                 LTO=thin BUILD_CONFIG="$BUILD_CONFIG" build/build.sh CC="/usr/bin/ccache clang" || exit 1
               fi
-            else
+            elif [ -f "WORKSPACE" ] || [ -d "build/kernel/kleaf" ] || [ -x "tools/bazel" ]; then
               tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist || exit 1
+            else
+              echo "No Bazel or build.sh detected; attempting plain make build (LineageOS-style)"
+              KDIR="$KERNEL_COMMON_DIR"
+              OUT_DIR="$CONFIG/out-make"
+              mkdir -p "$OUT_DIR"
+              DEFCONFIG=$(ls "$KDIR/arch/arm64/configs" 2>/dev/null | grep -E 'gki.*defconfig|defconfig$' | head -n1 || true)
+              if [ -z "$DEFCONFIG" ]; then echo "No defconfig found under $KDIR/arch/arm64/configs"; exit 1; fi
+              echo "Using DEFCONFIG=$DEFCONFIG"
+              # Merge extra config if available
+              if [ -f "$KDIR/scripts/kconfig/merge_config.sh" ] && [ -f "$KDIR/gki_extra.config" ]; then
+                echo "Merging extra config fragment..."
+                bash "$KDIR/scripts/kconfig/merge_config.sh" -m -O "$OUT_DIR" "$KDIR/arch/arm64/configs/$DEFCONFIG" "$KDIR/gki_extra.config" || true
+              else
+                make -C "$KDIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 CC="/usr/bin/ccache clang" "$DEFCONFIG"
+                make -C "$KDIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 CC="/usr/bin/ccache clang" olddefconfig
+              fi
+              make -C "$KDIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 CC="/usr/bin/ccache clang" -j"$(nproc)" Image Image.gz Image.lz4 || make -C "$KDIR" O="$OUT_DIR" ARCH=arm64 LLVM=1 LLVM_IAS=1 CC="/usr/bin/ccache clang" -j"$(nproc)" Image
             fi
             ccache --show-stats
             
@@ -728,6 +770,11 @@ jobs:
             cp "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image.lz4" ./bootimgs || true
             cp "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ./
             cp "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image.lz4" ./ || true
+          elif [ -f "$CONFIG/out-make/arch/arm64/boot/Image" ]; then
+            cp "$CONFIG/out-make/arch/arm64/boot/Image" ./bootimgs
+            [ -f "$CONFIG/out-make/arch/arm64/boot/Image.lz4" ] && cp "$CONFIG/out-make/arch/arm64/boot/Image.lz4" ./bootimgs || true
+            cp "$CONFIG/out-make/arch/arm64/boot/Image" ./
+            [ -f "$CONFIG/out-make/arch/arm64/boot/Image.lz4" ] && cp "$CONFIG/out-make/arch/arm64/boot/Image.lz4" ./ || true
           else
             echo "Error: Unable to locate built Image files"
             ls -R "$CONFIG" | head -n 200 || true
