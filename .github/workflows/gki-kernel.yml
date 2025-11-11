@@ -53,6 +53,16 @@ on:
         required: true
         type: boolean
         default: false
+      kernel_source_url:
+        required: false
+        type: string
+        description: "Custom kernel repo URL (if provided, overrides AOSP manifest)"
+        default: ""
+      kernel_source_ref:
+        required: false
+        type: string
+        description: "Branch or tag to checkout for custom kernel source"
+        default: "android15-6.6"
 jobs:
   build-kernel-kernelsu-susfs:
     runs-on: ubuntu-latest
@@ -137,6 +147,7 @@ jobs:
             echo "BOOT_SIGN_KEY_PATH=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem" >> $GITHUB_ENV
 
       - name: 安装仓库
+        if: ${{ inputs.kernel_source_url == '' }}
         run: |
           # Install dependencies
           mkdir -p ./git-repo
@@ -171,7 +182,8 @@ jobs:
 
           echo "CONFIG set to: $CONFIG"
 
-      - name: 初始化和同步内核源代码
+      - name: 初始化和同步内核源代码（AOSP）
+        if: ${{ inputs.kernel_source_url == '' }}
         run: |
           echo "Creating folder for configuration: $CONFIG..."
           mkdir -p "$CONFIG"
@@ -203,11 +215,40 @@ jobs:
             patch -p1 < fix_5.15.legacy.patch
           fi
 
+      - name: 克隆自定义内核源代码（ROM 专用）
+        if: ${{ inputs.kernel_source_url != '' }}
+        run: |
+          set -e
+          echo "Creating folder for configuration: $CONFIG..."
+          mkdir -p "$CONFIG"
+          cd "$CONFIG"
+
+          echo "Cloning custom kernel source from: ${{ inputs.kernel_source_url }}"
+          # Try branch/tag checkout first; fallback to default branch if ref missing
+          if git ls-remote --exit-code "${{ inputs.kernel_source_url }}" "${{ inputs.kernel_source_ref }}" > /dev/null 2>&1; then
+            git clone "${{ inputs.kernel_source_url }}" -b "${{ inputs.kernel_source_ref }}" --depth 1 .
+          else
+            echo "Ref ${{ inputs.kernel_source_ref }} not found; cloning default branch"
+            git clone "${{ inputs.kernel_source_url }}" --depth 1 .
+          fi
+          echo "CUSTOM_KERNEL=true" >> $GITHUB_ENV
+
+      - name: 设置内核目录变量
+        run: |
+          # Root of kernel source
+          echo "KERNEL_ROOT=$GITHUB_WORKSPACE/${{ env.CONFIG }}" >> $GITHUB_ENV
+          # Use common/ if present; otherwise use root
+          if [ -d "$GITHUB_WORKSPACE/${{ env.CONFIG }}/common" ]; then
+            echo "KERNEL_COMMON_DIR=$GITHUB_WORKSPACE/${{ env.CONFIG }}/common" >> $GITHUB_ENV
+          else
+            echo "KERNEL_COMMON_DIR=$GITHUB_WORKSPACE/${{ env.CONFIG }}" >> $GITHUB_ENV
+          fi
+
       - name: 使GKI在一加8E平台正常使用
         if: ${{ inputs.supp_op }}
         run: |
           echo '切换到驱动目录'
-          cd "$CONFIG/common/drivers/"
+          cd "$KERNEL_COMMON_DIR/drivers/"
           echo '当前目录$(pwd),下载支持补丁'
           curl -LSs "https://github.com/zzh20188/GKI_KernelSU_SUSFS/raw/refs/heads/dev/hmbird_patch.c" -o hmbird_patch.c
           if [ ! -f hmbird_patch.c ]; then
@@ -265,8 +306,8 @@ jobs:
       - name: 添加 Baseband-guard 支持
         if: ${{ github.event.inputs.BBG == 'true' }}
         run: |
-          echo "更改为配置目录: $CONFIG..."
-          cd "$CONFIG/common"
+          echo "更改为配置目录: $KERNEL_COMMON_DIR..."
+          cd "$KERNEL_COMMON_DIR"
           
           echo "下载并运行 Baseband-guard setup 脚本..."
           wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
@@ -331,9 +372,9 @@ jobs:
             exit 1
           fi
 
-          cd ../common
+          cd "$KERNEL_COMMON_DIR"
           FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-          if grep -q deprecated <<< "$REMOTE_BRANCH" && \
+          if [ -n "$REMOTE_BRANCH" ] && grep -q deprecated <<< "$REMOTE_BRANCH" && \
              { [ "$FORMATTED_BRANCH" == "android12-5.10" ] && \
                [ ${{ inputs.sub_level }} -lt 136 ]; }; then
             patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
@@ -345,7 +386,7 @@ jobs:
 
       - name: 一些修复补丁
         run: |
-          cd "$CONFIG/common"
+          cd "$KERNEL_COMMON_DIR"
           FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
           # Fake Patch to fix failures
           fake_patched=0
@@ -381,7 +422,7 @@ jobs:
       - name: 应用新的HOOKS补丁
         run: |
           echo "更改为配置目录: $CONFIG..."
-          cd "$CONFIG/common"
+          cd "$KERNEL_COMMON_DIR"
 
           if [ "${{ inputs.kernelsu_variant }}" == "Next" ]; then
             echo "Applying hooks for KernelSU-Next..."
@@ -396,8 +437,8 @@ jobs:
       - name: 复制源文件 & 应用LZ4KD & ZSTDN补丁
         if: ${{ inputs.use_zram }}
         run: |
-          echo "更改为配置目录: $CONFIG..."
-          cd "$CONFIG/common"
+          echo "更改为配置目录: $KERNEL_COMMON_DIR..."
+          cd "$KERNEL_COMMON_DIR"
           cp -r ../../SukiSU_patch/other/zram/lz4k/include/linux/* ./include/linux/
           cp -r ../../SukiSU_patch/other/zram/lz4k/lib/* ./lib/
           cp -r ../../SukiSU_patch/other/zram/lz4k/crypto/* ./crypto/
@@ -415,8 +456,8 @@ jobs:
 
       - name: 应用隐藏某特征的补丁
         run: |
-          echo "更改为配置目录: $CONFIG..."
-          cd "$CONFIG/common"
+          echo "更改为配置目录: $KERNEL_COMMON_DIR..."
+          cd "$KERNEL_COMMON_DIR"
           # Apply additional patch
           if [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
@@ -432,7 +473,7 @@ jobs:
           set -x
           set -e
           echo "写入LZ4KD&ZSTDN config依赖"
-          CONFIG_FILE="$CONFIG/common/arch/arm64/configs/gki_defconfig"
+          CONFIG_FILE="$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
 
           if [ "${{ inputs.kernel_version }}" = "5.10" ]; then
             echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
@@ -461,7 +502,7 @@ jobs:
           fi
 
           if [ "${{ inputs.android_version }}" = "android14" ] || [ "${{ inputs.android_version }}" = "android15" ]; then
-            sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$CONFIG/common/modules.bzl"
+            sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$KERNEL_COMMON_DIR/modules.bzl"
             echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
             echo 'Android14_Bazel:已修复zram&zsmalloc'
           fi
@@ -489,58 +530,60 @@ jobs:
           echo "Adding configuration settings to gki_defconfig..."
 
           # Add KSU configuration settings
-          echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
 
           if [ "${{ inputs.kernelsu_variant }}" == "Next" ]; then
-            echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_KPROBES_HOOK=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
           elif [ "${{ inputs.kernelsu_variant }}" == "SukiSU" ]; then
-            echo "CONFIG_KPM=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU_MANUAL_HOOK=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KPM=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
           elif [ "${{ inputs.kernelsu_variant }}" == "MKSU" ]; then
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
           fi
           
           # Add additional tmpfs config setting
-          echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TMPFS_XATTR=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
 
           # Add additional config setting
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP_NF_TARGET_TTL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_IP6_NF_TARGET_HL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_IP6_NF_MATCH_HL=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
 
           # Add BBR Config
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_NET_SCH_FQ=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_BIC=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_TCP_CONG_HTCP=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TCP_CONG_BBR=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_NET_SCH_FQ=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TCP_CONG_BIC=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_TCP_CONG_HTCP=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
 
           # Add SUSFS configuration settings
-          echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
           if [ "${{ inputs.kernel_version }}" != "6.6" ]; then
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
           else
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=n" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
           fi
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$KERNEL_COMMON_DIR/arch/arm64/configs/gki_defconfig"
           
           # Remove check_defconfig
-          sed -i 's/check_defconfig//' ./common/build.config.gki
+          if [ -f "$KERNEL_COMMON_DIR/build.config.gki" ]; then
+            sed -i 's/check_defconfig//' "$KERNEL_COMMON_DIR/build.config.gki"
+          fi
 
       - name: 配置内核名称
         run: |
@@ -549,10 +592,10 @@ jobs:
           
           if [ ! -z ${{ inputs.version }} ]; then
             echo "版本号不为空"
-            sed -i '$s|echo "\$res"|echo "${{ inputs.version }}"|' ./common/scripts/setlocalversion
+            sed -i '$s|echo "\$res"|echo "${{ inputs.version }}"|' "$KERNEL_COMMON_DIR/scripts/setlocalversion"
           else
             echo "版本号为空，使用默认值"
-            sed -i '$s|echo "\$res"|echo "\$res-zakozakoooooo-1145141919"|' ./common/scripts/setlocalversion
+            sed -i '$s|echo "\$res"|echo "\$res-zakozakoooooo-1145141919"|' "$KERNEL_COMMON_DIR/scripts/setlocalversion"
           fi
 
           # 如果你需要改构建时间,请把以下变量 CURRENT_TIME 修改为如下例子字符串,如:CURRENT_TIME="Sat Jun 07 06:29:29 UTC 2025"
@@ -562,6 +605,9 @@ jobs:
 
           echo "CURRENT_TIME=$CURRENT_TIME"
           perl -pi -e "s{UTS_VERSION=\"\\\$\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\)\"}{UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"}" ./common/scripts/mkcompile_h
+
+          # Ensure mkcompile_h updated when using custom source layout
+          sed -i "s/UTS_VERSION=.*/UTS_VERSION=\"#1 SMP PREEMPT $CURRENT_TIME\"/" "$KERNEL_COMMON_DIR/scripts/mkcompile_h" || true
 
           # Apply specific Makefile modification for kernel versions 6.1 and 6.6 only
           if [ "${{ inputs.kernel_version }}" = "6.1" ] || [ "${{ inputs.kernel_version }}" = "6.6" ]; then
@@ -591,16 +637,30 @@ jobs:
             set -x
             cd "$CONFIG"
             # 替换 BUILD_SYSTEM_DLKM=1 为 BUILD_SYSTEM_DLKM=0
-            sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' common/build.config.gki.aarch64
+            if [ -f "$KERNEL_COMMON_DIR/build.config.gki.aarch64" ]; then
+              sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' "$KERNEL_COMMON_DIR/build.config.gki.aarch64"
+            fi
 
             # 删除 MODULES_ORDER=android/gki_aarch64_modules 行
-            sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' common/build.config.gki.aarch64
+            if [ -f "$KERNEL_COMMON_DIR/build.config.gki.aarch64" ]; then
+              sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' "$KERNEL_COMMON_DIR/build.config.gki.aarch64"
+            fi
 
-            sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' common/build.config.gki.aarch64
+            if [ -f "$KERNEL_COMMON_DIR/build.config.gki.aarch64" ]; then
+              sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' "$KERNEL_COMMON_DIR/build.config.gki.aarch64"
+            fi
 
             echo "Building the kernel..."
             if [ -f "build/build.sh" ]; then
-              LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+              if [ -f "$KERNEL_COMMON_DIR/build.config.gki.aarch64" ]; then
+                LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+              else
+                BUILD_CONFIG=$(git ls-files | grep -m1 'build\.config.*aarch64' || true)
+                if [ -z "$BUILD_CONFIG" ]; then BUILD_CONFIG=$(git ls-files | grep -m1 'build\.config' || true); fi
+                if [ -z "$BUILD_CONFIG" ]; then echo "No build.config found for build.sh"; exit 1; fi
+                echo "Using BUILD_CONFIG=$BUILD_CONFIG"
+                LTO=thin BUILD_CONFIG="$BUILD_CONFIG" build/build.sh CC="/usr/bin/ccache clang" || exit 1
+              fi
             else
               tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist || exit 1
             fi
@@ -656,10 +716,21 @@ jobs:
           mkdir bootimgs
 
           echo "Creating bootimgs folder and copying images..."
-          cp ./$CONFIG/bazel-bin/common/kernel_aarch64/Image ./bootimgs
-          cp ./$CONFIG/bazel-bin/common/kernel_aarch64/Image.lz4 ./bootimgs
-          cp ./$CONFIG/bazel-bin/common/kernel_aarch64/Image ./
-          cp ./$CONFIG/bazel-bin/common/kernel_aarch64/Image.lz4 ./
+          if [ -f "$CONFIG/bazel-bin/common/kernel_aarch64/Image" ]; then
+            cp "$CONFIG/bazel-bin/common/kernel_aarch64/Image" ./bootimgs
+            cp "$CONFIG/bazel-bin/common/kernel_aarch64/Image.lz4" ./bootimgs
+            cp "$CONFIG/bazel-bin/common/kernel_aarch64/Image" ./
+            cp "$CONFIG/bazel-bin/common/kernel_aarch64/Image.lz4" ./
+          elif [ -f "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ]; then
+            cp "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ./bootimgs
+            cp "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image.lz4" ./bootimgs || true
+            cp "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ./
+            cp "$CONFIG/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image.lz4" ./ || true
+          else
+            echo "Error: Unable to locate built Image files"
+            ls -R "$CONFIG" | head -n 200 || true
+            exit 1
+          fi
 
           # Create gzip of the Image file
           gzip -n -k -f -9 ./Image > ./Image.gz
