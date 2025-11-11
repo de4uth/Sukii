@@ -42,6 +42,16 @@ on:
         required: true
         type: boolean
         default: false
+      build_system:
+        description: '选择构建系统 (auto/build_sh/bazel/make)'
+        required: false
+        type: string
+        default: auto
+      defconfig_name:
+        description: '指定defconfig名称用于make构建 (例如: nothing_sm7635_defconfig)'
+        required: false
+        type: string
+        default: ""
 
 
 jobs:
